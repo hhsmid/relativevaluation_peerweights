@@ -25,7 +25,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # %% Login to WRDS
 # Load credentials from a .env file located at the specified path.
-load_dotenv('/Users/hhsmid/Desktop/Hugo EUR/0. Master Thesis/03. Data/Code/WRDS_credentials.env')
+load_dotenv('WRDS_credentials.env')
 
 # Get WRDS_USER and WRDS_PASSWORD
 wrds_user = os.getenv('WRDS_USER')
@@ -54,7 +54,7 @@ except Exception as e:
 # %% Create and manage an SQLite database
 # Connect to a local SQLite database using the specified file path.
 sql_database = sqlite3.connect(
-    '/Users/hhsmid/Desktop/Hugo EUR/0. Master Thesis/03. Data/sql_database.sqlite')
+    '/Data/sql_database.sqlite')
 
 # Fetch all table names
 tables = sql_database.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()
@@ -72,7 +72,7 @@ print("All tables cleared from SQLite database.")
 
 # Reopen SQLite connection for the main script
 sql_database = sqlite3.connect(
-    '/Users/hhsmid/Desktop/Hugo EUR/0. Master Thesis/03. Data/sql_database.sqlite')
+    '/Data/sql_database.sqlite')
 
 
 # %% Set start date and end date
@@ -1172,41 +1172,6 @@ print("Missing values per column in the final merged data:\n", missing_values_fi
 # Generate summary statistics for the merged data
 summary_stats_final = final_merged_data.describe()
 print("Summary statistics for the final merged data:\n", summary_stats_final)
-
-
-# %% Summary statistics Latex table
-# Select the numeric columns of interest from final_merged_data
-numeric_columns = final_merged_data.select_dtypes(include=[np.number])
-
-# Calculate summary statistics
-summary_stats = numeric_columns.describe().transpose()
-
-# Calculate skewness and kurtosis and add them to the summary statistics
-summary_stats['Skewness'] = numeric_columns.apply(skew, nan_policy='omit')
-summary_stats['Kurtosis'] = numeric_columns.apply(kurtosis, nan_policy='omit')
-
-# Function to format numbers according to the requirement
-def format_number(x):
-    if isinstance(x, (int, float)):
-        # Large or very small numbers will use scientific notation
-        if abs(x) >= 1e3 or abs(x) <= 1e-3:
-            return f"{x:.2e}"  # Use scientific notation (e.g., 1.23e+04)
-        else:
-            # Regular number formatting with two decimal places
-            return f"{x:.2f}"
-    return x
-
-# Apply formatting to the summary statistics
-formatted_summary_stats = summary_stats.applymap(format_number)
-
-# Escape underscores in column names (the index) for LaTeX
-formatted_summary_stats.index = formatted_summary_stats.index.str.replace('_', r'\_', regex=False)
-
-# Convert the DataFrame to LaTeX
-latex_code = formatted_summary_stats.to_latex()
-
-# Print the LaTeX code
-print(latex_code)
 
 
 # %% Store the final merged data (including the calculated target variables) into the SQLite database
