@@ -33,7 +33,7 @@ cores = 7
 print("Loading data...")
 
 ########## Load data from SQLite with parallelized chunks ##########
-db_path = ''
+db_path = '/Data/sql_database.sqlite'
 
 def fetch_chunk(offset, limit):
     try:
