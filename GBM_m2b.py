@@ -40,7 +40,7 @@ EARLY_STOPPING_ROUNDS = 30
 print("Loading data...")
 
 ########## Load data from SQLite with parallelized chunks ##########
-db_path = '/Users/hhsmid/Desktop/Hugo EUR/0. Master Thesis/03. Data/sql_database.sqlite'
+db_path = '/Data/sql_database.sqlite'
 
 def fetch_chunk(offset, limit):
     try:
@@ -425,7 +425,7 @@ for month in tqdm(unique_months, desc="Processing months", position=0, leave=Tru
         oos_predictions.append(fold_outcomes)
         
         # Save fold outcomes for each firm (gvkey) for the current fold
-        fold_outcomes_path = f"/Volumes/HugoHardDrive/05. Results/GBM/m2b/Outcomes/outcomes_{month.strftime('%Y-%m')}_fold{fold}.csv"
+        fold_outcomes_path = f"/Results/GBM/m2b/Outcomes/outcomes_{month.strftime('%Y-%m')}_fold{fold}.csv"
         fold_outcomes.set_index('gvkey', inplace=True)
         fold_outcomes.to_csv(fold_outcomes_path)
         print("   ---> Fold outcomes saved.")
@@ -436,7 +436,7 @@ for month in tqdm(unique_months, desc="Processing months", position=0, leave=Tru
         W = compute_peer_weights_gbm(model, X_train, X_test, y_train, LEARNING_RATE)
 
         # Save the W matrix
-        W_path = f"/Volumes/HugoHardDrive/05. Results/GBM/m2b/Peer weights/peer_weights_{month.strftime('%Y-%m')}_fold{fold}.csv"
+        W_path = f"/Results/GBM/m2b/Peer weights/peer_weights_{month.strftime('%Y-%m')}_fold{fold}.csv"
         gvkey_train = train_set['gvkey'].values
         gvkey_test = test_set['gvkey'].values
         W_df = pd.DataFrame(W, index=gvkey_train, columns=gvkey_test)
@@ -461,6 +461,6 @@ for month in tqdm(unique_months, desc="Processing months", position=0, leave=Tru
 results = pd.DataFrame(results)
 
 # Save the results
-results.to_csv("/Volumes/HugoHardDrive/05. Results/GBM/m2b/results.csv", index=False)
+results.to_csv("/Results/GBM/m2b/results.csv", index=False)
 
 
