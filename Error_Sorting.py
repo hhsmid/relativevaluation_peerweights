@@ -86,6 +86,7 @@ print(f"Loaded {len(data)} rows of data.")
 
 # %% Portfolio sorting for each Model-Multiple combination
 portfolio_results = []
+all_excess_returns = []
 
 for model in models:
     
@@ -193,6 +194,11 @@ for model in models:
         long_short_ff3["excess_return"] = long_short_ff3["long_short"] - long_short_ff3["rf"]
         sharpe_ratio = long_short_ff3["excess_return"].mean() / long_short_ff3["excess_return"].std()
         print(f"\nSharpe Ratio of Long-Short Portfolio: {sharpe_ratio:.4f}\n")
+        
+        # Store excess returns with metadata for later comparison
+        excess_return_series = long_short_ff3[["month", "excess_return"]].copy()
+        excess_return_series["strategy"] = f"{model}-{multiple}"
+        all_excess_returns.append(excess_return_series)
 
         # Get the full regression summary as text
         regression_summary_text = results.summary().as_text()
@@ -239,4 +245,43 @@ portfolio_df = pd.DataFrame(portfolio_results)
 output_path = os.path.join(RESULTS_DIR, "portfolio_analysis_results.xlsx")
 portfolio_df.to_excel(output_path, index=False)
 print(f"\nPortfolio analysis results saved successfully to {output_path}.")
+
+
+# %% Ledoit & Wolf test for Sharpe ratio differences
+# Combine all strategy excess returns
+all_excess_df = pd.concat(all_excess_returns, ignore_index=True)
+
+# Pivot for easier access: one column per strategy
+pivot_df = all_excess_df.pivot(index="month", columns="strategy", values="excess_return")
+
+# Initialize empty matrix
+pval_matrix = pd.DataFrame(index=strategies, columns=strategies)
+
+# Fill the lower triangle with p-values from Sharpe ratio test
+for i, s1 in enumerate(strategies):
+    for j, s2 in enumerate(strategies):
+        if i == j:
+            pval_matrix.loc[s1, s2] = "---"
+        elif i > j:
+            r1 = pivot_df[s1].dropna()
+            r2 = pivot_df[s2].dropna()
+            
+            # Align time index
+            common_idx = r1.index.intersection(r2.index)
+            r1_aligned = r1.loc[common_idx].values
+            r2_aligned = r2.loc[common_idx].values
+
+            if len(r1_aligned) < 10:  # safety check for short series
+                pval = np.nan
+            else:
+                stat, pval = sharpe_ratio_test(r1_aligned, r2_aligned)
+
+            pval_matrix.loc[s1, s2] = f"{pval:.4f}" if not np.isnan(pval) else "NA"
+        else:
+            pval_matrix.loc[s1, s2] = ""
+
+# Save to CSV
+csv_path = os.path.join(RESULTS_DIR, "sharpe_ratio_lower_triangular.csv")
+pval_matrix.to_csv(csv_path)
+print(f"\nLower triangular Sharpe ratio test matrix saved as:\n{csv_path}")
 
