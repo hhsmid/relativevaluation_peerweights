@@ -21,13 +21,13 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # %% Define global variables
 # Define results paths
-BASE_DIR = "/Volumes/HugoHardDrive/05. Results"
+BASE_DIR = ""
 OUTCOMES_TEMPLATE = os.path.join(BASE_DIR, "{model}/{multiple}/Outcomes/*.csv")
-PLOT_DIR = "/Users/hhsmid/Desktop/Hugo EUR/0. Master Thesis/06. Reports/Figures"
-RESULTS_DIR = "/Users/hhsmid/Desktop/Hugo EUR/0. Master Thesis/06. Reports"
+PLOT_DIR = ""
+RESULTS_DIR = ""
 
 # Define database path
-DB_PATH = "/Users/hhsmid/Desktop/Hugo EUR/0. Master Thesis/03. Data/sql_database.sqlite"
+DB_PATH = "/Data/sql_database.sqlite"
 
 # Define models and multiples
 models = ["K-means", "HAC", "GMM", "FCM", "GBM", "RF"]
