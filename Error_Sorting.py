@@ -83,7 +83,6 @@ data = data.dropna(subset=['month'])
 print(f"Loaded {len(data)} rows of data.")
 
 
-
 # %% Portfolio sorting for each Model-Multiple combination
 portfolio_results = []
 all_excess_returns = []
