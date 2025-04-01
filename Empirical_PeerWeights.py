@@ -19,13 +19,13 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # %% Define global variables
 # Define results paths
-BASE_DIR = "/Volumes/HugoHardDrive/05. Results"
+BASE_DIR = ""
 PEER_WEIGHTS_TEMPLATE = os.path.join(BASE_DIR, "{model}/{multiple}/Peer weights/peer_weights_{month}_fold{fold}.csv")
-PLOT_DIR = "/Users/hhsmid/Desktop/Hugo EUR/0. Master Thesis/06. Reports/Figures"
-RESULTS_DIR = "/Users/hhsmid/Desktop/Hugo EUR/0. Master Thesis/06. Reports"
+PLOT_DIR = ""
+RESULTS_DIR = ""
 
 # Define database path
-DB_PATH = "/Users/hhsmid/Desktop/Hugo EUR/0. Master Thesis/03. Data/sql_database.sqlite"
+DB_PATH = "Data/sql_database.sqlite"
 
 # Define models and multiples
 models = ["K-means", "HAC", "GMM", "FCM", "GBM", "RF"]
@@ -353,7 +353,7 @@ def compute_frobenius_norms():
 
 # %% Execution
 # Check gvkey consistency
-#check_gvkey_consistency()
+check_gvkey_consistency()
 
 # Example Test Firm and Month Selection for Plotting
 test_firm_gvkey = "001690" # This is Apple Inc.
