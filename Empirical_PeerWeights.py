@@ -58,7 +58,7 @@ ff10 = [
 cores = 7
 
 
-# %% Peer Weights plots and Frobenius Norm Matrix
+# %% Peer Weights utility functions
 def check_gvkey_consistency():
     """
     Ensure all files for a given month-fold combination contain the same unique train firm gvkeys (rows)
@@ -170,6 +170,57 @@ def plot_peer_weights(test_firm_gvkey, month, fold):
         plt.tight_layout()
         plt.savefig(os.path.join(PLOT_DIR, f"{model}_peer_weights_single.png"), dpi=100)
         plt.show()
+        
+
+def get_top_peers_table(test_firm_gvkey, month, fold):
+    """
+    For a given test firm, month, and fold, construct a table with the top 10 training firm gvkeys (peers)
+    for each model-multiple combination.
+    
+    For hard clustering models (e.g., 'K-means', 'HAC'), where all nonzero weights are equal,
+    10 random peers with nonzero weights are selected.
+    For other models, peers are sorted by descending weight.
+    
+    Returns:
+        A pandas DataFrame with columns: 'Model', 'Multiple', 'Top 10 Peers'
+    """
+    # Define which models are considered as hard clustering
+    hard_clustering_models = ["K-means", "HAC"]
+    
+    top_peers_list = []
+    
+    for model in models:
+        for multiple in multiples:
+            df = load_peer_weights(model, multiple, month, fold)
+            if df is not None and test_firm_gvkey in df.columns:
+                # Extract peer weights for the specific test firm
+                weights = df[test_firm_gvkey]
+                if model in hard_clustering_models:
+                    # For hard clustering, all nonzero weights are equal:
+                    # Randomly select 10 peers with nonzero weight.
+                    non_zero_peers = weights[weights > 0]
+                    if len(non_zero_peers) >= 10:
+                        selected_peers = non_zero_peers.sample(n=10, random_state=42).index.tolist()
+                    else:
+                        selected_peers = non_zero_peers.index.tolist()
+                else:
+                    # For other models, sort the weights in descending order and select the top 10.
+                    selected_peers = weights.sort_values(ascending=False).head(10).index.tolist()
+                
+                top_peers_list.append({
+                    "Model": model,
+                    "Multiple": multiple,
+                    "Top 10 Peers": ", ".join(selected_peers)
+                })
+            else:
+                top_peers_list.append({
+                    "Model": model,
+                    "Multiple": multiple,
+                    "Top 10 Peers": "No Data"
+                })
+    
+    top_peers_df = pd.DataFrame(top_peers_list)
+    return top_peers_df
 
 
 def compute_concentration_metrics():
@@ -206,7 +257,7 @@ def compute_concentration_metrics():
                 weights = df[col].values
                 total = np.sum(weights)
                 if total > 0:
-                    weights = weights / total  # Normalize to sum to 1
+                    weights = weights / total  # Normalize to sum to exactly one (this should already be the case)
                 else:
                     continue  # Skip if total is zero
 
@@ -360,6 +411,16 @@ test_firm_gvkey = "001690" # This is Apple Inc.
 month = "2018-04"
 fold = 3
 plot_peer_weights(test_firm_gvkey, month, fold)
+
+# Get and display the top 10 peers table for the specified test firm, month, and fold
+top_peers_df = get_top_peers_table(test_firm_gvkey, month, fold)
+print("\n=== Top 10 Peers for Each Model-Multiple Combination ===")
+print(top_peers_df)
+
+# Save the top peers table
+output_table_path = os.path.join(RESULTS_DIR, "top10_peers_table.csv")
+top_peers_df.to_csv(output_table_path, index=False)
+print(f"\nTop 10 peers table saved to {output_table_path}")
 
 # Compute and display peer weight concentration metrics
 print("\nComputing peer weight concentration metrics...")
