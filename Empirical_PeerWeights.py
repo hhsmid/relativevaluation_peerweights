@@ -27,11 +27,14 @@ RESULTS_DIR = ""
 # Define database path
 DB_PATH = "Data/sql_database.sqlite"
 
+# Load the gvkey to company name mapping
+mapping_file = '/gvkey indexes.xlsx'
+mapping_df = pd.read_excel(mapping_file)
+mapping_dict = dict(zip(mapping_df.iloc[:, 0].astype(str), mapping_df.iloc[:, 1]))
+
 # Define models and multiples
 models = ["K-means", "HAC", "GMM", "FCM", "GBM", "RF"]
 multiples = ["m2b", "v2a", "v2s"]
-
-# Define a model abbreviation mapping (for table display)
 model_abbr = {
     "K-means": "KM",
     "HAC": "HAC",
@@ -42,7 +45,7 @@ model_abbr = {
 }
 
 # Define months
-months = pd.date_range(start="1990-01", end="2023-09", freq='ME').strftime('%Y-%m')
+months = pd.date_range(start="2023-01", end="2023-09", freq='ME').strftime('%Y-%m')
 
 # Define folds
 folds = range(1, 6)
@@ -172,55 +175,172 @@ def plot_peer_weights(test_firm_gvkey, month, fold):
         plt.show()
         
 
-def get_top_peers_table(test_firm_gvkey, month, fold):
+def get_top_peers(test_firm_gvkey, month, fold, num_peers):
     """
-    For a given test firm, month, and fold, construct a table with the top 10 training firm gvkeys (peers)
+    For a given test firm, month, and fold, construct a table with the top num_peers training firm gvkeys (peers)
     for each model-multiple combination.
     
-    For hard clustering models (e.g., 'K-means', 'HAC'), where all nonzero weights are equal,
-    10 random peers with nonzero weights are selected.
-    For other models, peers are sorted by descending weight.
+    For hard clustering models, where all nonzero weights are equal,
+    the candidate list is all gvkeys with nonzero weight and then re-ordered by the frequency
+    of appearance across all combinations.
+    
+    For soft clustering models, if more than num_peers peers share the top weight (or tie at the cutoff),
+    then the tied gvkeys are re-sorted by their frequency (i.e. overlap) across all combinations.
     
     Returns:
-        A pandas DataFrame with columns: 'Model', 'Multiple', 'Top 10 Peers'
+        A pandas DataFrame with columns: 'Model', 'Multiple', 'Top num_peers Peers'
     """
-    # Define which models are considered as hard clustering
+    # Define which models are considered hard clustering.
     hard_clustering_models = ["K-means", "HAC"]
     
-    top_peers_list = []
+    # Dictionary to store preliminary candidate lists and corresponding weights.
+    preliminary_candidates = {}
+    candidate_weights_all = {}
     
+    # Loop through each model and multiple to extract candidate gvkeys.
     for model in models:
         for multiple in multiples:
+            key = (model, multiple)
             df = load_peer_weights(model, multiple, month, fold)
             if df is not None and test_firm_gvkey in df.columns:
-                # Extract peer weights for the specific test firm
                 weights = df[test_firm_gvkey]
                 if model in hard_clustering_models:
-                    # For hard clustering, all nonzero weights are equal:
-                    # Randomly select 10 peers with nonzero weight.
-                    non_zero_peers = weights[weights > 0]
-                    if len(non_zero_peers) >= 10:
-                        selected_peers = non_zero_peers.sample(n=10, random_state=42).index.tolist()
-                    else:
-                        selected_peers = non_zero_peers.index.tolist()
+                    # For hard clustering models: all nonzero weights are equal.
+                    candidates = list(weights[weights > 0].index)
+                    # Assign an arbitrary equal weight (here, 1) for later sorting.
+                    candidate_weights = {gv: 1 for gv in candidates}
                 else:
-                    # For other models, sort the weights in descending order and select the top 10.
-                    selected_peers = weights.sort_values(ascending=False).head(10).index.tolist()
-                
-                top_peers_list.append({
-                    "Model": model,
-                    "Multiple": multiple,
-                    "Top 10 Peers": ", ".join(selected_peers)
-                })
+                    # For soft clustering models: sort by weight descending.
+                    sorted_weights = weights.sort_values(ascending=False)
+                    if len(sorted_weights) < num_peers:
+                        candidates = list(sorted_weights.index)
+                    else:
+                        # Determine the cutoff using the weight of the num_peers'th candidate.
+                        cutoff = sorted_weights.iloc[num_peers-1]
+                        # Include all gvkeys with weight >= cutoff.
+                        candidates = list(sorted_weights[sorted_weights >= cutoff].index)
+                    candidate_weights = weights.to_dict()
             else:
-                top_peers_list.append({
-                    "Model": model,
-                    "Multiple": multiple,
-                    "Top 10 Peers": "No Data"
-                })
-    
-    top_peers_df = pd.DataFrame(top_peers_list)
-    return top_peers_df
+                candidates = []
+                candidate_weights = {}
+            
+            preliminary_candidates[key] = candidates
+            candidate_weights_all[key] = candidate_weights
+
+    # Compute overall frequency: count in how many candidate lists each gvkey appears.
+    frequency = defaultdict(int)
+    for cand_list in preliminary_candidates.values():
+        for gv in cand_list:
+            frequency[gv] += 1
+
+    # Now, for each combination, determine the final top num_peers using frequency as a tie-breaker.
+    top_peers_list = []
+    for model in models:
+        for multiple in multiples:
+            key = (model, multiple)
+            candidates = preliminary_candidates[key]
+            candidate_weights = candidate_weights_all[key]
+            final_candidates = []
+            if not candidates:
+                final_candidates = []
+            elif model in hard_clustering_models:
+                # For hard clustering models, sort candidates solely by frequency.
+                sorted_candidates = sorted(candidates, key=lambda x: frequency[x], reverse=True)
+                final_candidates = sorted_candidates[:num_peers]
+            else:
+                # For soft clustering models, first sort by weight descending.
+                sorted_by_weight = sorted(candidates, key=lambda x: candidate_weights.get(x, -np.inf), reverse=True)
+                if len(sorted_by_weight) <= num_peers:
+                    final_candidates = sorted_by_weight
+                else:
+                    # Identify the cutoff weight (weight of the num_peers'th candidate).
+                    cutoff = candidate_weights.get(sorted_by_weight[num_peers-1], None)
+                    # Split candidates into those strictly above cutoff and those tied at cutoff.
+                    above_cutoff = [gv for gv in sorted_by_weight if candidate_weights.get(gv, -np.inf) > cutoff]
+                    tied = [gv for gv in sorted_by_weight if candidate_weights.get(gv, -np.inf) == cutoff]
+                    remaining = num_peers - len(above_cutoff)
+                    # Sort the tied candidates by frequency (overlap) in descending order.
+                    tied_sorted = sorted(tied, key=lambda x: frequency[x], reverse=True)
+                    final_candidates = above_cutoff + tied_sorted[:remaining]
+                    # In case fewer than num_peers candidates were selected, add more from the tied list.
+                    if len(final_candidates) < num_peers:
+                        extra = tied_sorted[remaining:num_peers - len(final_candidates)]
+                        final_candidates.extend(extra)
+            company_names = [mapping_dict.get(str(candidate), str(candidate)) for candidate in final_candidates]
+            top_peers_list.append({
+                "Model": model,
+                "Multiple": multiple,
+                f"Top {num_peers} Peers": ", ".join(company_names) if company_names else "No Data"
+            })
+    return pd.DataFrame(top_peers_list)
+
+
+def plot_top_peers(test_firm_gvkey, month, fold, num_peers):
+    """
+    Plot separate lower-triangle heatmaps (one for each multiple) to show peer overlap,
+    with axes labeled only by the model (abbreviation) and the title showing the multiple in lowercase.
+    The plot is saved as a PNG file, and the overlap matrix is printed as a table.
+    """
+    sns.set_theme(style="white")
+    df_top = get_top_peers(test_firm_gvkey, month, fold, num_peers)
+
+    # For each multiple, create a separate heatmap and print its underlying table
+    for mult in multiples:
+        sub_df = df_top[df_top['Multiple'] == mult].copy()
+        # Create a column for the model abbreviation only.
+        sub_df['Model_Abbr'] = sub_df['Model'].map(model_abbr)
+        # Get the list of models for the axes
+        combos = sub_df['Model_Abbr'].tolist()
+        overlap_matrix = pd.DataFrame(index=combos, columns=combos, dtype=float)
+
+        # Build a dictionary mapping model abbreviation to their set of top peers.
+        top_peers_dict = {}
+        for _, row in sub_df.iterrows():
+            abbr = row['Model_Abbr']
+            peers_str = row[f"Top {num_peers} Peers"]
+            if peers_str == "No Data":
+                top_peers_dict[abbr] = set()
+            else:
+                top_peers_dict[abbr] = set(peer.strip() for peer in peers_str.split(","))
+
+        # Compute pairwise overlap (intersection count)
+        for i in combos:
+            for j in combos:
+                overlap_matrix.loc[i, j] = len(top_peers_dict[i].intersection(top_peers_dict[j]))
+
+        # Create a mask for the upper triangle (if you want a lower-triangle only heatmap)
+        mask = np.triu(np.ones_like(overlap_matrix.values, dtype=bool))
+
+        # Plot the heatmap using seaborn
+        plt.figure(figsize=(8, 6))
+        ax = sns.heatmap(
+            overlap_matrix.astype(float),
+            mask=mask,
+            cmap="rocket_r",
+            annot=True,
+            fmt=".0f", 
+            linewidths=0.5,
+            linecolor="white",
+            cbar_kws={"shrink": 0.75, "label": "Peer Overlap"},
+            square=True
+        )
+
+        # The title now uses the multiple in lowercase.
+        ax.set_title(f"Top {num_peers} Peer Overlap – {mult} – {month}", fontsize=13, pad=14)
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right", fontsize=10)
+        ax.set_yticklabels(ax.get_yticklabels(), fontsize=10)
+        plt.tight_layout()
+
+        # Save the plot in the designated directory
+        filename = os.path.join(PLOT_DIR, f"heatmap_overlap_top{num_peers}_{mult}_{month}.png")
+        plt.savefig(filename, dpi=300)
+        print(f"Plot saved as: {filename}")
+        plt.show()
+
+        # Print the table of overlap values.
+        print(f"\nOverlap Table for multiple '{mult}' in {month}:")
+        print(overlap_matrix)
+        print("\n" + "="*60 + "\n")
 
 
 def compute_concentration_metrics():
@@ -404,23 +524,28 @@ def compute_frobenius_norms():
 
 # %% Execution
 # Check gvkey consistency
-check_gvkey_consistency()
+#check_gvkey_consistency()
 
 # Example Test Firm and Month Selection for Plotting
 test_firm_gvkey = "001690" # This is Apple Inc.
 month = "2018-04"
 fold = 3
-plot_peer_weights(test_firm_gvkey, month, fold)
+#plot_peer_weights(test_firm_gvkey, month, fold)
 
-# Get and display the top 10 peers table for the specified test firm, month, and fold
-top_peers_df = get_top_peers_table(test_firm_gvkey, month, fold)
-print("\n=== Top 10 Peers for Each Model-Multiple Combination ===")
+# Get and display the top 5 peers table for the specified test firm, month, and fold
+top_peers_df = get_top_peers(test_firm_gvkey, month, fold, 5)
+print("\nTop 5 Peers for Each Model-Multiple Combination (Company Names):\n")
 print(top_peers_df)
 
 # Save the top peers table
-output_table_path = os.path.join(RESULTS_DIR, "top10_peers_table.csv")
+output_table_path = os.path.join(RESULTS_DIR, "top5_peers_table.csv")
 top_peers_df.to_csv(output_table_path, index=False)
-print(f"\nTop 10 peers table saved to {output_table_path}")
+print(f"\nTop 5 peers table saved to {output_table_path}")
+
+# Plot heatmaps for top peers overlap
+for num in [10, 20, 50]:
+    print(f"\nPlotting split heatmaps for Top {num} Peers...")
+    plot_top_peers(test_firm_gvkey, month, fold, num)
 
 # Compute and display peer weight concentration metrics
 print("\nComputing peer weight concentration metrics...")
@@ -433,11 +558,11 @@ for mult in multiples:
     concentration_results[mult].to_csv(os.path.join(RESULTS_DIR, f"concentration_metrics_{mult}.csv"))
 
 # Compute Frobenius Norms Across Model multiples
-frob_matrix = compute_frobenius_norms()
+mean_matrix, std_matrix = compute_frobenius_norms()
 print("\n=== Frobenius Norms Between Peer Weight Matrices ===")
-print(frob_matrix)
+print(mean_matrix, std_matrix)
 
 # Save Frobenius Norms Results
-frob_matrix.to_csv(os.path.join(BASE_DIR, "frobenius_norms_results.csv"))
+mean_matrix.to_csv(os.path.join(RESULTS_DIR, "frobenius_norms_mean_results.csv"))
+std_matrix.to_csv(os.path.join(RESULTS_DIR, "frobenius_norms_std_results.csv"))
 print("\nFrobenius norms results saved successfully.")
-
