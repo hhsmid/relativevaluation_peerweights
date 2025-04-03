@@ -45,7 +45,7 @@ model_abbr = {
 }
 
 # Define months
-months = pd.date_range(start="2023-01", end="2023-09", freq='ME').strftime('%Y-%m')
+months = pd.date_range(start="1990-01", end="2023-09", freq='ME').strftime('%Y-%m')
 
 # Define folds
 folds = range(1, 6)
