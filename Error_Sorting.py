@@ -224,14 +224,13 @@ for model in models:
 
     # After looping through all multiples for the current model, plot all curves in one figure
     if model_cum_returns:  # ensure that there is data to plot
-        plt.figure(figsize=(10, 5))
+        plt.figure(figsize=(10, 6))
         for multiple, df_plot in model_cum_returns.items():
             plt.plot(df_plot["month"], df_plot["cumulative_return"],
                      label=multiple,
                      color=color_map[multiple],
                      linestyle=line_styles[multiple])
         plt.axhline(y=1, color="gray", linestyle="--")
-        plt.title(f"Cumulative Returns of the Long-Short Portfolio ({model})")
         plt.xlabel("Year")
         plt.ylabel("Cumulative Return")
         plt.legend()
@@ -256,6 +255,44 @@ pivot_df = all_excess_df.pivot(index="month", columns="strategy", values="excess
 # Initialize empty matrix
 pval_matrix = pd.DataFrame(index=strategies, columns=strategies)
 
+# Create Ledoit & Wolf test function
+def ledoit_wolf_sharpe_test(r1, r2, epsilon=1e-8):
+    """
+    Ledoit and Wolf (2008) test for the equality of Sharpe ratios.
+    Returns test statistic and p-value.
+    A small constant epsilon is added to the variance estimate for numerical stability.
+    """
+    r1 = np.asarray(r1)
+    r2 = np.asarray(r2)
+    
+    # Remove NaNs
+    mask = ~np.isnan(r1) & ~np.isnan(r2)
+    r1, r2 = r1[mask], r2[mask]
+
+    # Compute statistics
+    mean1, mean2 = np.mean(r1), np.mean(r2)
+    std1, std2 = np.std(r1, ddof=1), np.std(r2, ddof=1)
+    sr1, sr2 = mean1 / std1, mean2 / std2
+    n = len(r1)
+    
+    # Delta method variance estimator
+    cov = np.cov(r1, r2, ddof=1)
+    gamma11 = cov[0, 0]
+    gamma22 = cov[1, 1]
+    gamma12 = cov[0, 1]
+    
+    var_sr_diff = (
+        (gamma11 / std1**2 + (mean1**2 * gamma11) / std1**4) / n +
+        (gamma22 / std2**2 + (mean2**2 * gamma22) / std2**4) / n -
+        2 * ((gamma12 / (std1 * std2)) + (mean1 * mean2 * gamma12) / (std1**3 * std2**3)) / n
+    )
+    
+    test_stat = (sr1 - sr2) / np.sqrt(max(var_sr_diff, 0) + epsilon)
+    p_value = 2 * (1 - norm.cdf(np.abs(test_stat)))
+    
+    return test_stat, p_value
+
+
 # Fill the lower triangle with p-values from Sharpe ratio test
 for i, s1 in enumerate(strategies):
     for j, s2 in enumerate(strategies):
@@ -273,7 +310,7 @@ for i, s1 in enumerate(strategies):
             if len(r1_aligned) < 10:  # safety check for short series
                 pval = np.nan
             else:
-                stat, pval = sharpe_ratio_test(r1_aligned, r2_aligned)
+                stat, pval = ledoit_wolf_sharpe_test(r1_aligned, r2_aligned)
 
             pval_matrix.loc[s1, s2] = f"{pval:.4f}" if not np.isnan(pval) else "NA"
         else:
