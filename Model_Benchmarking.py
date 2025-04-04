@@ -298,6 +298,51 @@ industry_errors_df.to_csv(industry_errors_csv_path, index=False)
 print(f"\nIndustry errors saved successfully to {industry_errors_csv_path}.")
 
 
+# %% Compute global y-axis limits for consistent plots
+# RMSE
+all_rmse_values = pd.concat([
+    series.dropna()
+    for model_data in rmse_dict.values()
+    for series in model_data.values()
+])
+global_rmse_min, global_rmse_max = all_rmse_values.min(), all_rmse_values.max()
+
+# CPI-adjusted RMSE
+all_rmse_cpi_values = pd.concat([
+    series.dropna()
+    for model_data in rmse_dict_cpi.values()
+    for series in model_data.values()
+])
+global_rmse_cpi_min, global_rmse_cpi_max = all_rmse_cpi_values.min(), all_rmse_cpi_values.max()
+
+# R²
+all_r2_values = pd.concat([
+    series.dropna()
+    for model_data in r2_dict.values()
+    for series in model_data.values()
+])
+global_r2_min, global_r2_max = all_r2_values.min(), all_r2_values.max()
+
+# MAPE
+all_mape_values = pd.concat([
+    series.dropna()
+    for model_data in mape_dict.values()
+    for series in model_data.values()
+])
+global_mape_min, global_mape_max = all_mape_values.min(), all_mape_values.max()
+
+# Industries
+all_industry_errors = []
+
+for model in models:
+    all_industry_errors.extend(industry_errors_dict[model])
+
+industry_errors_df_all = pd.DataFrame(all_industry_errors)
+global_industry_error_min = industry_errors_df_all['Median Absolute Percentage Error'].min()
+global_industry_error_max = industry_errors_df_all['Median Absolute Percentage Error'].max()
+
+
+
 # %% Plots over time and across industries
 # Over time
 for model in models:
@@ -308,8 +353,8 @@ for model in models:
         if multiple in rmse_dict[model]:
             plt.plot(rmse_dict[model][multiple], label=multiple, linestyle=line_styles[multiple], color=color_map[multiple])
 
-    plt.ylabel("RMSE")
-    plt.title(f"Monthly Median RMSE ({model})")
+    plt.ylim(global_rmse_min, global_rmse_max)
+    plt.ylabel("Monthly Median RMSE")
     plt.xlabel("Time (Years)")
     plt.xticks(rotation=30)
     plt.legend(title="Multiple")
@@ -328,8 +373,8 @@ for model in models:
                 linestyle=line_styles[multiple],
                 color=color_map[multiple]
             )
-    plt.ylabel("CPI-Adjusted RMSE")
-    plt.title(f"Monthly Median CPI-Adjusted RMSE ({model})")
+    plt.ylim(global_rmse_cpi_min, global_rmse_cpi_max)
+    plt.ylabel("Monthly Median CPI-Adjusted RMSE")
     plt.xlabel("Time (Years)")
     plt.xticks(rotation=30)
     plt.legend(title="Multiple")
@@ -344,8 +389,8 @@ for model in models:
         if multiple in r2_dict[model]:
             plt.plot(r2_dict[model][multiple], label=multiple, linestyle=line_styles[multiple], color=color_map[multiple])
 
-    plt.ylabel("R²")
-    plt.title(f"Monthly Median Out-of-Sample R² ({model})")
+    # plt.ylim(global_r2_min, global_r2_max)
+    plt.ylabel("Monthly Median Out-of-Sample R²")
     plt.xlabel("Time (Years)")
     plt.xticks(rotation=30)
     plt.legend(title="Multiple")
@@ -360,8 +405,8 @@ for model in models:
         if multiple in mape_dict[model]:
             plt.plot(mape_dict[model][multiple], label=multiple, linestyle=line_styles[multiple], color=color_map[multiple])
 
+    plt.ylim(global_mape_min, global_mape_max)
     plt.ylabel("Median Absolute Percentage Error")
-    plt.title(f"Median Absolute Percentage Error Over Time ({model})")
     plt.xlabel("Time (Years)")
     plt.xticks(rotation=30)
     plt.legend(title="Multiple")
@@ -383,9 +428,9 @@ for model in models:
         palette=color_map,
         hue_order=multiples
     )
+    # plt.xlim(global_industry_error_min, global_industry_error_max)  # Consistent x-axis
     plt.xlabel("Median Absolute Percentage Error")
     plt.ylabel("Fama-French 10 Industries")
-    plt.title(f"Median Absolute Percentage Error Across Industries ({model})")
     plt.legend(title="Multiple")
     plt.tight_layout()
     plt.savefig(os.path.join(PLOT_DIR, f"{model}_industry_errors.png"), dpi=100)
