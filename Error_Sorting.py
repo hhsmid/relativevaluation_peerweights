@@ -145,6 +145,12 @@ for model in models:
             .reset_index(drop=True)
         )
 
+        # Remove mis-assigned rows (positive percentage_error_lag in quintile 1 and negative percentage_error_lag in quintile 5)
+        sorted_portfolios = sorted_portfolios[
+            ~(((sorted_portfolios['portfolio'] == 1) & (sorted_portfolios['percentage_error_lag'] > 0)) |
+              ((sorted_portfolios['portfolio'] == 5) & (sorted_portfolios['percentage_error_lag'] < 0)))
+        ]
+
         # Compute value-weighted returns per portfolio per month
         portfolio_returns = (sorted_portfolios
             .groupby(["month", "portfolio"])
