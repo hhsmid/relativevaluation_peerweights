@@ -155,7 +155,7 @@ for model in models:
                 ((sorted_portfolios['portfolio'] == 5) & (sorted_portfolios['percentage_error_lag'] < 0))
             )]
         
-        # For each month, check if portfolio 1 (or 5) is empty after cleaning (these results are computed but not printed)
+        # For each month, check if portfolio 1 (or 5) is empty after cleaning
         empty_q1_months = sorted_portfolios.groupby("month").apply(lambda x: x[x['portfolio'] == 1].shape[0] == 0)
         empty_q5_months = sorted_portfolios.groupby("month").apply(lambda x: x[x['portfolio'] == 5].shape[0] == 0)
         
@@ -193,18 +193,6 @@ for model in models:
         ff3_model = sm.OLS(long_short_ff3["long_short"], sm.add_constant(long_short_ff3[["mkt_excess", "smb", "hml"]]))
         results = ff3_model.fit(cov_type="HAC", cov_kwds={"maxlags": 6})
         print(results.summary())
-        
-        # Generate LaTeX formatted regression summary using summary2
-        regression_summary_latex = results.summary2().as_latex()
-        
-        # Define the output path for the LaTeX summary file (saved as a .txt file)
-        latex_file_path = os.path.join(RESULTS_DIR, f"{model}_{multiple}_regression_summary.txt")
-        
-        # Save the LaTeX summary to the file
-        with open(latex_file_path, "w") as file:
-            file.write(regression_summary_latex)
-        
-        print(f"\nRegression summary saved as LaTeX table to {latex_file_path}")
         
         # Compute mean return of the long-short portfolio
         mean_return = long_short_ff3["long_short"].mean()
