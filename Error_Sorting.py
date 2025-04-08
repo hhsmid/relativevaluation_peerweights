@@ -146,24 +146,39 @@ for model in models:
         )
 
         # Remove mis-assigned rows (positive percentage_error_lag in quintile 1 and negative percentage_error_lag in quintile 5)
-        sorted_portfolios = sorted_portfolios[
-            ~(((sorted_portfolios['portfolio'] == 1) & (sorted_portfolios['percentage_error_lag'] > 0)) |
-              ((sorted_portfolios['portfolio'] == 5) & (sorted_portfolios['percentage_error_lag'] < 0)))
-        ]
-
-        # Compute value-weighted returns per portfolio per month
-        portfolio_returns = (sorted_portfolios
+        misassigned_q1 = sorted_portfolios[(sorted_portfolios['portfolio'] == 1) & (sorted_portfolios['percentage_error_lag'] > 0)]
+        misassigned_q5 = sorted_portfolios[(sorted_portfolios['portfolio'] == 5) & (sorted_portfolios['percentage_error_lag'] < 0)]
+        
+        if not misassigned_q1.empty or not misassigned_q5.empty:
+            sorted_portfolios = sorted_portfolios[~(
+                ((sorted_portfolios['portfolio'] == 1) & (sorted_portfolios['percentage_error_lag'] > 0)) |
+                ((sorted_portfolios['portfolio'] == 5) & (sorted_portfolios['percentage_error_lag'] < 0))
+            )]
+        
+        # For each month, check if portfolio 1 (or 5) is empty after cleaning (these results are computed but not printed)
+        empty_q1_months = sorted_portfolios.groupby("month").apply(lambda x: x[x['portfolio'] == 1].shape[0] == 0)
+        empty_q5_months = sorted_portfolios.groupby("month").apply(lambda x: x[x['portfolio'] == 5].shape[0] == 0)
+        
+        # Compute value-weighted returns per portfolio per month.
+        portfolio_returns = (
+            sorted_portfolios
             .groupby(["month", "portfolio"])
-            .apply(lambda x: np.average(x["ret"], weights=x["mktcap_lag"], axis=0) if not x.empty else np.nan)
+            .apply(lambda x: np.average(x["ret"], weights=x["mktcap_lag"], axis=0) if not x.empty else 0)
             .reset_index(name="portfolio_ret")
         )
-
-        # Compute long-short portfolio return (Q5 - Q1)
-        long_short_portfolio = (portfolio_returns
-            .pivot(index="month", columns="portfolio", values="portfolio_ret")
-            .assign(long_short=lambda x: x[5] - x[1])
-            .reset_index()
-        )
+        
+        # Pivot the returns so each month is a row and each portfolio (quintile) is a column.
+        portfolio_pivot = portfolio_returns.pivot(index="month", columns="portfolio", values="portfolio_ret")
+        
+        # Reindex to ensure that all five quintile columns are present for every month and fill any missing cells with 0.
+        expected_quintiles = [1, 2, 3, 4, 5]
+        portfolio_pivot = portfolio_pivot.reindex(columns=expected_quintiles, fill_value=0).fillna(0)
+        
+        # Compute the long-short return: long on Quintile 5 minus short on Quintile 1.
+        portfolio_pivot["long_short"] = portfolio_pivot[5] - portfolio_pivot[1]
+        
+        # Reset the index to get a final DataFrame of long-short portfolio returns.
+        long_short_portfolio = portfolio_pivot.reset_index()
 
         # Merge Fama-French factors
         long_short_ff3 = long_short_portfolio.merge(
