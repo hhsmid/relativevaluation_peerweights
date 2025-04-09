@@ -6,9 +6,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 from joblib import Parallel, delayed
 from tqdm import tqdm
-from itertools import combinations
+from itertools import combinations, product
 import warnings
 from collections import defaultdict
+import seaborn as sns
+from matplotlib.colorbar import ColorbarBase
+from matplotlib.colors import Normalize
+from matplotlib.ticker import FormatStrFormatter
 
 # Suppress FutureWarning
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -160,20 +164,21 @@ def plot_peer_weights(test_firm_gvkey, month, fold):
                 peer_weights = df[test_firm_gvkey].sort_values(ascending=False)
                 plt.plot(
                     peer_weights.values,
-                    label=multiple,
                     color=color_map[multiple],
-                    linestyle=line_styles[multiple]
+                    linestyle=line_styles[multiple],
+                    linewidth=2
                 )
             else:
                 print(f"No data for {model}-{multiple} for test firm {test_firm_gvkey} in {month}, fold {fold}.")
+        
         plt.xlabel("Training Firms (In Descending Order By Weight)")
         plt.ylabel("Weight")
-        plt.legend(title="Multiple")
+        plt.gca().yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
         plt.tight_layout()
         plt.savefig(os.path.join(PLOT_DIR, f"{model}_peer_weights_single.png"), dpi=100)
         plt.show()
         
-
+        
 def get_top_peers(test_firm_gvkey, month, fold, num_peers):
     """
     For a given test firm, month, and fold, construct a table with the top num_peers training firm gvkeys (peers)
@@ -274,166 +279,149 @@ def get_top_peers(test_firm_gvkey, month, fold, num_peers):
     return pd.DataFrame(top_peers_list)
 
 
-def plot_top_peers_case(test_firm_gvkey, month, fold, num_peers):
+def get_consolidated_top_peers(test_firm_gvkey, num_peers):
     """
-    Plot heatmaps for top peers overlap for each multiple in separate figures.
-    """
-    sns.set_theme(style="white")
-    df_top = get_top_peers(test_firm_gvkey, month, fold, num_peers)
-
-    for mult in multiples:
-        # Create a separate figure for each multiple
-        fig, ax = plt.subplots(figsize=(8, 6))
-        sub_df = df_top[df_top['Multiple'] == mult].copy()
-        # Map model names to their abbreviations.
-        sub_df['Model_Abbr'] = sub_df['Model'].map(model_abbr)
-        combos = sub_df['Model_Abbr'].tolist()
-        
-        # Build an empty overlap matrix.
-        overlap_matrix = pd.DataFrame(index=combos, columns=combos, dtype=float)
-        top_peers_dict = {}
-        for _, row in sub_df.iterrows():
-            abbr = row['Model_Abbr']
-            peers_str = row[f"Top {num_peers} Peers"]
-            if peers_str == "No Data":
-                top_peers_dict[abbr] = set()
-            else:
-                top_peers_dict[abbr] = set(peer.strip() for peer in peers_str.split(","))
-                
-        # Compute pairwise overlaps.
-        for i in combos:
-            for j in combos:
-                overlap_matrix.loc[i, j] = len(top_peers_dict[i].intersection(top_peers_dict[j]))
-        
-        # Create a mask for the upper triangle.
-        mask = np.triu(np.ones_like(overlap_matrix.values, dtype=bool))
-        
-        # Plot the heatmap
-        sns.heatmap(
-            overlap_matrix.astype(float),
-            mask=mask,
-            cmap="rocket_r",
-            annot=True,
-            fmt=".0f",
-            linewidths=0.5,
-            linecolor="white",
-            cbar=False,
-            square=True,
-            ax=ax
-        )
-        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right", fontsize=10)
-        ax.set_yticklabels(ax.get_yticklabels(), fontsize=10)
-        
-        # Print the overlap table
-        print(f"\nOverlap Table for multiple '{mult}' in {month}:")
-        print(overlap_matrix)
-        print("\n" + "="*60 + "\n")
-        
-        plt.tight_layout()
-        
-        # Save the figure without white margins using bbox_inches='tight'
-        filename = os.path.join(PLOT_DIR, f"heatmap_overlap_top{num_peers}_{mult}_{month}.png")
-        plt.savefig(filename, dpi=100, bbox_inches='tight')
-        print(f"Plot saved as: {filename}")
-        plt.show()
-
-
-def plot_top_peers_aggregate(num_peers):
-    """
-    Parallelized aggregation of top peers overlap across all month-fold combinations and all test firms.
+    Aggregate top peers for a given test firm over all month-fold combinations.
     
-    For each (month, fold), a representative file is used to obtain the list of test firms.
-    For each test firm, we compute the pairwise overlap of top peers (per multiple) across models 
-    by calling get_top_peers. These results are computed in parallel and then summed over all tasks.
+    For each month and fold for which the test firm appears (as determined by the presence
+    in the CSV files), the function extracts the top candidates using the get_top_peers function.
+    It then aggregates the candidate lists (as given per model-multiple combination) via their frequency,
+    sorts them in descending order of frequency, and returns the overall top num_peers.
     
-    Finally, for each multiple, an aggregated heatmap is generated and saved.
+    Parameters:
+        test_firm_gvkey (str): The gvkey of the test firm.
+        num_peers (int): The number of peers to extract per month-fold combination and overall.
+    
+    Returns:
+        A list of tuples (gvkey, frequency) for the overall top peers.
     """
-    # Build a list of tasks: each task is a tuple (month, fold, test_firm, num_peers)
-    tasks = []
-    for month in tqdm(months, desc="Generating tasks (months)"):
-        for fold in folds:
-            rep_df = load_peer_weights(models[0], multiples[0], month, fold)
-            if rep_df is None:
-                continue
-            test_firms = rep_df.columns.tolist()
-            for test_firm in test_firms:
-                tasks.append((month, fold, test_firm, num_peers))
-    print(f"Total tasks: {len(tasks)}")
-    
-    # Define the worker function to process a single task.
-    def compute_task_overlap(task):
-        month, fold, test_firm, num_peers = task
-        local_results = {}
-        # Get the top peers table for the given test firm
-        top_peers_df = get_top_peers(test_firm, month, fold, num_peers)
-        for mult in multiples:
-            sub_df = top_peers_df[top_peers_df['Multiple'] == mult].copy()
-            sub_df['Model_Abbr'] = sub_df['Model'].map(model_abbr)
+    # Initialize an aggregator: key is (model, multiple), value is a frequency dictionary.
+    aggregator = {}
+    for model in models:
+        for multiple in multiples:
+            aggregator[(model, multiple)] = defaultdict(int)
             
-            # Build a dictionary mapping model abbreviation to set of top peer gvkeys
+    # Loop through all month-fold combinations with a progress bar.
+    total_iterations = len(months) * len(folds)
+    for month, fold in tqdm(product(months, folds), total=total_iterations, desc="Processing month-fold combos"):
+        try:
+            # Extract top peers for the given test firm, month, and fold.
+            df_top = get_top_peers(test_firm_gvkey, month, fold, num_peers)
+        except Exception as e:
+            print(f"Error processing month {month}, fold {fold}: {e}")
+            continue
+        
+        # If no data, skip this combination.
+        if df_top.empty:
+            continue
+        
+        # Loop through each row (each row is one model-multiple combination).
+        for _, row in df_top.iterrows():
+            model = row.get("Model")
+            multiple = row.get("Multiple")
+            peers_str = row.get(f"Top {num_peers} Peers", "No Data")
+            if peers_str == "No Data":
+                continue
+            # Split the candidate list string into individual gvkeys.
+            candidates = [peer.strip() for peer in peers_str.split(",") if peer.strip()]
+            # Update the frequency counter for the corresponding (model, multiple) key.
+            for candidate in candidates:
+                aggregator[(model, multiple)][candidate] += 1
+
+    # Build the consolidated result for each (model, multiple) combination.
+    consolidated_results = []
+    for (model, multiple), freq_dict in aggregator.items():
+        if freq_dict:
+            # Sort candidates by frequency in descending order.
+            sorted_candidates = sorted(freq_dict.items(), key=lambda x: x[1], reverse=True)
+            top_candidates = sorted_candidates[:num_peers]
+            # Map the gvkeys to company names if available.
+            consolidated_str = ", ".join([mapping_dict.get(str(candidate), str(candidate)) for candidate, _ in top_candidates])
+        else:
+            consolidated_str = "No Data"
+        consolidated_results.append({
+            "Model": model,
+            "Multiple": multiple,
+            f"Consolidated Top {num_peers} Peers": consolidated_str
+        })
+        
+    return pd.DataFrame(consolidated_results)
+
+
+def plot_heatmaps(test_firm_gvkey, num_peers):
+    """
+    Aggregate the top peers overlap heatmaps over all month-fold combinations for a given test firm.
+    """
+    models_abbr_list = [model_abbr[model] for model in models]
+    aggregated = {mult: pd.DataFrame(0, index=models_abbr_list, columns=models_abbr_list) for mult in multiples}
+
+    total_iterations = len(months) * len(folds)
+    for month, fold in tqdm(product(months, folds), total=total_iterations, desc="Aggregating overlaps"):
+        try:
+            df_top = get_top_peers(test_firm_gvkey, month, fold, num_peers)
+        except Exception as e:
+            print(f"Error for month {month} fold {fold}: {e}")
+            continue
+        if df_top.empty:
+            continue
+
+        for mult in multiples:
+            sub_df = df_top[df_top['Multiple'] == mult]
+            if sub_df.empty:
+                continue
+
             top_peers_dict = {}
             for _, row in sub_df.iterrows():
-                abbr = row['Model_Abbr']
+                abbr = model_abbr.get(row['Model'], row['Model'])
                 peers_str = row[f"Top {num_peers} Peers"]
-                if peers_str == "No Data":
-                    top_peers_dict[abbr] = set()
-                else:
-                    top_peers_dict[abbr] = set(peer.strip() for peer in peers_str.split(","))
-            
-            # Create an overlap matrix for this test firm.
-            matrix = pd.DataFrame(
-                0,
-                index=[model_abbr[m] for m in models],
-                columns=[model_abbr[m] for m in models]
-            )
-            for model_i in top_peers_dict:
-                for model_j in top_peers_dict:
-                    overlap_count = len(top_peers_dict[model_i].intersection(top_peers_dict[model_j]))
-                    matrix.loc[model_i, model_j] = overlap_count
-            local_results[mult] = matrix
-        return local_results
-    
-    # Process all tasks in parallel.
-    results = Parallel(n_jobs=cores, batch_size=10)(
-        delayed(compute_task_overlap)(task) for task in tqdm(tasks, desc="Processing test firms")
-    )
-    
-    # Initialize aggregated matrices (one for each multiple)
-    aggregated_overlaps = {
-        multiple: pd.DataFrame(
-            0,
-            index=[model_abbr[m] for m in models],
-            columns=[model_abbr[m] for m in models]
-        )
-        for multiple in multiples
-    }
-    
-    # Sum the local matrices from all tasks into the aggregated matrices.
-    for res in tqdm(results, desc="Aggregating results"):
-        for mult in multiples:
-            aggregated_overlaps[mult] += res[mult]
-    
-    # Plot and save the aggregated heatmaps for each multiple.
-    for mult, overlap_matrix in aggregated_overlaps.items():
+                top_peers_dict[abbr] = set(peer.strip() for peer in peers_str.split(",") if peer.strip()) if peers_str != "No Data" else set()
+
+            for model1 in top_peers_dict:
+                for model2 in top_peers_dict:
+                    overlap_count = len(top_peers_dict[model1].intersection(top_peers_dict[model2]))
+                    aggregated[mult].loc[model1, model2] += overlap_count
+
+    # Compute global vmin and vmax for consistent color range
+    all_values = pd.concat([aggregated[m].stack() for m in multiples])
+    vmin, vmax = all_values.min(), all_values.max()
+
+    # Plot heatmaps without colorbar
+    for mult in multiples:
+        matrix = aggregated[mult]
+        if matrix.sum().sum() == 0:
+            print(f"No aggregated data for multiple: {mult}")
+            continue
+
         plt.figure(figsize=(8, 6))
-        mask = np.triu(np.ones_like(overlap_matrix.values, dtype=bool))
+        mask = np.triu(np.ones_like(matrix.values, dtype=bool))
+
         sns.heatmap(
-            overlap_matrix.astype(float),
+            matrix.astype(float),
             mask=mask,
             cmap="rocket_r",
             annot=True,
             fmt=".0f",
             linewidths=0.5,
             linecolor="white",
-            cbar=False,
-            square=True
+            cbar=False,  # ⛔ Remove the inline colorbar
+            square=True,
+            vmin=vmin,
+            vmax=vmax
         )
+        plt.xticks(rotation=45, ha="right", fontsize=12)
+        plt.yticks(fontsize=12)
         plt.tight_layout()
-        filename = os.path.join(PLOT_DIR, f"heatmap_overlap_aggregate_all_parallel_top{num_peers}_{mult}.png")
-        plt.savefig(filename, dpi=100, bbox_inches='tight')
-        print(f"Aggregate heatmap saved as: {filename}")
+        plt.savefig(os.path.join(PLOT_DIR, f"aggregated_heatmap_overlap_top{num_peers}_{mult}.png"), dpi=100, bbox_inches='tight')
         plt.show()
 
+    fig, ax = plt.subplots(figsize=(6, 1))
+    norm = Normalize(vmin=vmin, vmax=vmax)
+    cb = ColorbarBase(ax, cmap="rocket_r", norm=norm, orientation='horizontal')
+    cb.set_label("Peer Overlap Count", fontsize=12)
+    fig.tight_layout()
+    fig.savefig(os.path.join(PLOT_DIR, f"heatmap_colorbar_legend_top{num_peers}.png"), dpi=100, bbox_inches='tight')
+    plt.show()
+        
 
 def compute_concentration_metrics():
     """
@@ -624,25 +612,20 @@ month = "2018-04"
 fold = 3
 plot_peer_weights(test_firm_gvkey, month, fold)
 
-# Get and display the top 5 peers table for the specified test firm, month, and fold
-top_peers_df = get_top_peers(test_firm_gvkey, month, fold, 5)
-print("\nTop 5 Peers for Each Model-Multiple Combination (Company Names):\n")
-print(top_peers_df)
+# Get and display the top 5 peers table for the specified test firm over all months
+consolidated_top = get_consolidated_top_peers(test_firm_gvkey, 5)
+print("\nOverall Consolidated Top 5 Peers:")
+print(consolidated_top)
 
 # Save the top peers table
 output_table_path = os.path.join(RESULTS_DIR, "top5_peers_table.csv")
-top_peers_df.to_csv(output_table_path, index=False)
+consolidated_top.to_csv(output_table_path, index=False)
 print(f"\nTop 5 peers table saved to {output_table_path}")
-
-# Plot heatmaps for top peers overlap for the single case
-for num in [10, 20, 50]:
-    print(f"\nPlotting split heatmaps for Top {num} Peers... for single case")
-    plot_top_peers_case(test_firm_gvkey, month, fold, num)
     
-# Plot heatmaps for top peers overlap on aggregate
+# Plot aggregated heatmaps for top peers overlap
 for num in [10, 20, 50]:
-    print(f"\nPlotting split heatmaps for Top {num} Peers... on aggregate")
-    plot_top_peers_aggregate(num)
+    print(f"\nPlotting heatmaps for Top {num} Peers")
+    plot_heatmaps(test_firm_gvkey, num)
 
 # Compute and display peer weight concentration metrics
 print("\nComputing peer weight concentration metrics...")
@@ -663,3 +646,4 @@ print(mean_matrix, std_matrix)
 mean_matrix.to_csv(os.path.join(RESULTS_DIR, "frobenius_norms_mean_results.csv"))
 std_matrix.to_csv(os.path.join(RESULTS_DIR, "frobenius_norms_std_results.csv"))
 print("\nFrobenius norms results saved successfully.")
+
