@@ -436,3 +436,43 @@ for model in models:
     plt.savefig(os.path.join(PLOT_DIR, f"{model}_industry_errors.png"), dpi=100)
     plt.show()
 
+
+# %% Model Confidence Set (MCS) Test
+for multiple in multiples:
+    print("\n" + "="*80)
+    print(f"Running MCS test for multiple '{multiple}'")
+    
+    # Build a DataFrame of monthly CPI-adjusted RMSE losses for this multiple
+    losses_df = pd.DataFrame(index=pd.to_datetime(months))
+    for model in models:
+        if multiple in rmse_dict_cpi[model]:
+            losses_df[model] = rmse_dict_cpi[model][multiple]
+    
+    # Drop any month that is missing data for at least one model
+    losses_df = losses_df.dropna()
+    print("\nLoss matrix for multiple '{0}':".format(multiple))
+    print(losses_df.head())
+    
+    # Instantiate the MCS test.
+    # Use test size of 0.05 and 1000 bootstrap replications.
+    mcs_test = MCS(losses_df, 0.05, reps=10000)
+    
+    # Compute the MCS test; this runs the necessary bootstrap and elimination procedure.
+    mcs_test.compute()
+    
+    # Print additional statistics for the report.
+    print("\nDetailed MCS statistics for multiple '{0}':".format(multiple))
+    print("Test size (alpha):", mcs_test.size)
+    print("Number of bootstrap replications (reps):", mcs_test.reps)
+    print("Bootstrap method used:", mcs_test.bootstrap)
+    print("Block size:", mcs_test.block_size)
+    print("Number of time periods (T):", mcs_test.t)
+    print("Number of models (k):", mcs_test.k)
+    print("\nP-values for each model (or pair):")
+    print(mcs_test.pvalues)
+    print("\nModels included (surviving) in the MCS:")
+    print(mcs_test.included)
+    print("Models excluded from the MCS:")
+    print(mcs_test.excluded)
+    
+    print("="*80 + "\n")
