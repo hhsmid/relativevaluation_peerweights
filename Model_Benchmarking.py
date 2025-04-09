@@ -217,9 +217,16 @@ for model in models:
         rmse_cpi_series = rmse_cpi_series.reindex(pd.to_datetime(months))
         r2_series = r2_series.reindex(pd.to_datetime(months))
         
+        # Compute the statistics for CPI-adjusted RMSE and R²
         mean_rmse = rmse_series.mean()
         mean_rmse_cpi = rmse_cpi_series.mean()
         mean_r2 = r2_series.mean()
+        
+        median_rmse_cpi = rmse_cpi_series.median()
+        std_rmse_cpi = rmse_cpi_series.std()
+        
+        median_r2 = r2_series.median()
+        std_r2 = r2_series.std()
         
         # Display the metrics
         print("\n=== Aggregated Evaluation Metrics ===")
@@ -229,9 +236,13 @@ for model in models:
         print(f"Mean Percentage Error (non-absolute): {avg_percentage_error}")
         print(f"Median Percentage Error (non-absolute): {med_percentage_error}")
         print(f"Standard Deviation Percentage Error (non-absolute): {sd_percentage_error}")
-        print(f"Average Monthly Median RMSE: {mean_rmse}")
+        # print(f"Average Monthly Median RMSE: {mean_rmse}")
         print(f"Average Monthly Median CPI-adjusted RMSE: {mean_rmse_cpi}")
+        print(f"Median Monthly Median CPI-adjusted RMSE: {median_rmse_cpi}")
+        print(f"Std Dev of Monthly Median CPI-adjusted RMSE: {std_rmse_cpi}")
         print(f"Average Monthly Median R²: {mean_r2}")
+        print(f"Median Monthly Median R²: {median_r2}")
+        print(f"Std Dev of Monthly Median R²: {std_r2}")
 
         # Store results
         aggregated_metrics.append({
@@ -245,7 +256,11 @@ for model in models:
             "SD_Percentage_Error": sd_percentage_error,
             "Avg_Mon_Med_RMSE": mean_rmse,
             "Avg_Mon_Med_CPI_Adjusted_RMSE": mean_rmse_cpi,
-            "Avg_Mon_Med_R2": mean_r2
+            "Med_Mon_Med_CPI_Adjusted_RMSE": median_rmse_cpi, 
+            "Std_Mon_Med_CPI_Adjusted_RMSE": std_rmse_cpi, 
+            "Avg_Mon_Med_R2": mean_r2,
+            "Med_Mon_Med_R2": median_r2,        
+            "Std_Mon_Med_R2": std_r2    
         })
 
         
@@ -437,6 +452,7 @@ for model in models:
     plt.show()
 
 
+
 # %% Model Confidence Set (MCS) Test
 for multiple in multiples:
     print("\n" + "="*80)
@@ -476,3 +492,4 @@ for multiple in multiples:
     print(mcs_test.excluded)
     
     print("="*80 + "\n")
+
