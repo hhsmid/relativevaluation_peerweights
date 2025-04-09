@@ -350,17 +350,18 @@ def get_consolidated_top_peers(test_firm_gvkey, num_peers):
 
 def plot_heatmaps(test_firm_gvkey, num_peers):
     """
-    Aggregate the top peers overlap heatmaps over all month-fold combinations for a given test firm.
+    Plot lower-triangle heatmaps for top peer overlaps
     """
     models_abbr_list = [model_abbr[model] for model in models]
     aggregated = {mult: pd.DataFrame(0, index=models_abbr_list, columns=models_abbr_list) for mult in multiples}
+    plotted_matrices = {}
 
-    total_iterations = len(months) * len(folds)
-    for month, fold in tqdm(product(months, folds), total=total_iterations, desc="Aggregating overlaps"):
+    # Build aggregated overlap matrices
+    for month, fold in tqdm(product(months, folds), total=len(months) * len(folds), desc="Aggregating overlaps"):
         try:
             df_top = get_top_peers(test_firm_gvkey, month, fold, num_peers)
         except Exception as e:
-            print(f"Error for month {month} fold {fold}: {e}")
+            print(f"Error for month {month}, fold {fold}: {e}")
             continue
         if df_top.empty:
             continue
@@ -376,50 +377,58 @@ def plot_heatmaps(test_firm_gvkey, num_peers):
                 peers_str = row[f"Top {num_peers} Peers"]
                 top_peers_dict[abbr] = set(peer.strip() for peer in peers_str.split(",") if peer.strip()) if peers_str != "No Data" else set()
 
-            for model1 in top_peers_dict:
-                for model2 in top_peers_dict:
-                    overlap_count = len(top_peers_dict[model1].intersection(top_peers_dict[model2]))
-                    aggregated[mult].loc[model1, model2] += overlap_count
+            for m1 in top_peers_dict:
+                for m2 in top_peers_dict:
+                    overlap = len(top_peers_dict[m1].intersection(top_peers_dict[m2]))
+                    aggregated[mult].loc[m1, m2] += overlap
 
-    # Compute global vmin and vmax for consistent color range
-    all_values = pd.concat([aggregated[m].stack() for m in multiples])
-    vmin, vmax = all_values.min(), all_values.max()
+    # Filter out empty matrices and compute color limits only from lower triangles
+    lower_triangle_values = []
+    for mult, matrix in aggregated.items():
+        tril_mask = np.tril(np.ones_like(matrix.values, dtype=bool), k=-1)
+        visible_values = matrix.where(tril_mask).stack()
+        if not visible_values.empty:
+            plotted_matrices[mult] = matrix
+            lower_triangle_values.append(visible_values)
 
-    # Plot heatmaps without colorbar
-    for mult in multiples:
-        matrix = aggregated[mult]
-        if matrix.sum().sum() == 0:
-            print(f"No aggregated data for multiple: {mult}")
-            continue
+    if not lower_triangle_values:
+        print("No valid heatmap data — skipping plots and colorbar.")
+        return
 
-        plt.figure(figsize=(8, 6))
+    # Compute color scale
+    all_visible = pd.concat(lower_triangle_values)
+    vmin, vmax = all_visible.min(), all_visible.max()
+
+    # Plot heatmaps with no colorbar
+    for mult, matrix in plotted_matrices.items():
         mask = np.triu(np.ones_like(matrix.values, dtype=bool))
-
+        plt.figure(figsize=(10, 10))
         sns.heatmap(
-            matrix.astype(float),
+            matrix,
             mask=mask,
             cmap="rocket_r",
             annot=True,
             fmt=".0f",
             linewidths=0.5,
             linecolor="white",
-            cbar=False,  # ⛔ Remove the inline colorbar
             square=True,
+            cbar=False,
             vmin=vmin,
             vmax=vmax
         )
         plt.xticks(rotation=45, ha="right", fontsize=12)
         plt.yticks(fontsize=12)
         plt.tight_layout()
-        plt.savefig(os.path.join(PLOT_DIR, f"aggregated_heatmap_overlap_top{num_peers}_{mult}.png"), dpi=100, bbox_inches='tight')
+        plt.savefig(os.path.join(PLOT_DIR, f"aggregated_heatmap_overlap_top{num_peers}_{mult}.png"), dpi=300, bbox_inches='tight')
         plt.show()
 
+    # Save shared colorbar
     fig, ax = plt.subplots(figsize=(6, 1))
     norm = Normalize(vmin=vmin, vmax=vmax)
     cb = ColorbarBase(ax, cmap="rocket_r", norm=norm, orientation='horizontal')
     cb.set_label("Peer Overlap Count", fontsize=12)
     fig.tight_layout()
-    fig.savefig(os.path.join(PLOT_DIR, f"heatmap_colorbar_legend_top{num_peers}.png"), dpi=100, bbox_inches='tight')
+    fig.savefig(os.path.join(PLOT_DIR, f"heatmap_colorbar_legend_top{num_peers}.png"), dpi=300, bbox_inches='tight')
     plt.show()
         
 
@@ -599,7 +608,48 @@ def compute_frobenius_norms():
         mean_matrix.loc[key1, key2] = mean_matrix.loc[key2, key1] = np.mean(values) if values else np.nan
         std_matrix.loc[key1, key2] = std_matrix.loc[key2, key1] = np.std(values) if values else np.nan
 
-    return mean_matrix, std_matrix
+    return mean_matrix, std_matrix, pair_results
+
+
+def permutation_test_frobenius(pair_results, n_permutations=1000, random_state=27):
+    """
+    Perform permutation tests on Frobenius norms stored in `pair_results`.
+    
+    Args:
+        pair_results (dict): Dictionary from compute_frobenius_norms()
+        n_permutations (int): Number of permutations
+        random_state (int): Seed for reproducibility
+    
+    Returns:
+        A DataFrame of p-values for each pair
+    """
+    rng = np.random.default_rng(random_state)
+    p_values = pd.DataFrame(index=pair_results.keys(), columns=['p_value'], dtype=float)
+
+    for pair, values in tqdm(pair_results.items(), desc="Permutation Testing"):
+        values = np.array(values)
+        n = len(values)
+        if n < 2:
+            p_values.loc[pair] = np.nan
+            continue
+
+        obs_mean = np.mean(values)
+
+        # Build the null distribution by permuting values between models
+        combined = np.array(values)
+        null_means = []
+        for _ in range(n_permutations):
+            signs = rng.choice([-1, 1], size=n)  # simulate random assignment
+            permuted = combined * signs
+            null_mean = np.mean(np.abs(permuted))
+            null_means.append(null_mean)
+
+        # Compute p-value
+        p_val = np.mean([nm >= obs_mean for nm in null_means])
+        p_values.loc[pair] = p_val
+
+    return p_values
+
 
 
 # %% Execution
@@ -637,13 +687,16 @@ for mult in multiples:
     print(concentration_results[mult])
     concentration_results[mult].to_csv(os.path.join(RESULTS_DIR, f"concentration_metrics_{mult}.csv"))
 
-# Compute Frobenius Norms Across Model multiples
-mean_matrix, std_matrix = compute_frobenius_norms()
+# Compute Frobenius norms
+mean_matrix, std_matrix, pair_results = compute_frobenius_norms()
 print("\n=== Frobenius Norms Between Peer Weight Matrices ===")
 print(mean_matrix, std_matrix)
 
-# Save Frobenius Norms Results
+# Save Frobenius norms results
 mean_matrix.to_csv(os.path.join(RESULTS_DIR, "frobenius_norms_mean_results.csv"))
 std_matrix.to_csv(os.path.join(RESULTS_DIR, "frobenius_norms_std_results.csv"))
-print("\nFrobenius norms results saved successfully.")
+
+# Compute Frobenius norms test results
+pvals_df = permutation_test_frobenius(pair_results, n_permutations=1000)
+pvals_df.to_csv(os.path.join(RESULTS_DIR, "frobenius_permtest_pvalues.csv"))
 
