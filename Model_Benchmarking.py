@@ -11,6 +11,9 @@ from tqdm import tqdm
 import warnings
 from sklearn.metrics import mean_squared_error
 from pandas_datareader import data as pdr
+from arch.bootstrap import MCS
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 
 # Suppress FutureWarning
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -359,83 +362,87 @@ global_industry_error_max = industry_errors_df_all['Median Absolute Percentage E
 
 
 # %% Plots over time and across industries
-# Over time
+# Set global font sizes
+plt.rcParams.update({
+    'axes.labelsize': 18,
+    'axes.titlesize': 18,
+    'xtick.labelsize': 14,
+    'ytick.labelsize': 14,
+    'legend.fontsize': 13
+})
+
+# Define hatches for industry plot
+hatch_patterns = {"m2b": "//", "v2a": "xx", "v2s": ".."}
+
+# Time series legend (shared)
+ts_legend_elements = [
+    Line2D([0], [0], color=color_map[m], linestyle=line_styles[m], linewidth=2, label=m)
+    for m in multiples
+]
+ts_legend_fig = plt.figure(figsize=(6, 1))
+plt.legend(handles=ts_legend_elements, loc='center', ncol=len(multiples), frameon=False, title="Multiple")
+plt.axis('off')
+ts_legend_fig.tight_layout(pad=0.1)
+ts_legend_fig.savefig(os.path.join(PLOT_DIR, "legend_timeseries.png"), dpi=100, bbox_inches='tight')
+plt.show()
+
+# Create custom Patch legend handles with color + hatch
+industry_legend_elements = [
+    Patch(
+        facecolor=color_map[m],
+        hatch=hatch_patterns[m],
+        edgecolor='black',
+        label=m
+    ) for m in multiples
+]
+
+# Create horizontal legend figure
+ind_legend_fig = plt.figure(figsize=(6, 1.2))
+plt.legend(
+    handles=industry_legend_elements,
+    loc='center',
+    ncol=len(multiples),
+    frameon=False,
+    title="Multiple"
+)
+plt.axis('off')
+ind_legend_fig.tight_layout(pad=0.1)
+ind_legend_fig.savefig(os.path.join(PLOT_DIR, "legend_industry.png"), dpi=100, bbox_inches='tight')
+plt.show()
+    
+# Time series plots
 for model in models:
-    plt.figure(figsize=(10, 6))
+    for metric_name, metric_dict, y_label, y_min, y_max, filename in [
+        ("rmse", rmse_dict, "Monthly Median RMSE", global_rmse_min, global_rmse_max, "rmse_over_time.png"),
+        ("rmse_cpi", rmse_dict_cpi, "Monthly Median CPI-Adjusted RMSE", global_rmse_cpi_min, global_rmse_cpi_max, "rmse_cpi_over_time.png"),
+        ("r2", r2_dict, "Monthly Median Out-of-Sample R²", None, None, "r2_over_time.png"),
+        ("mape", mape_dict, "Median Absolute Percentage Error", global_mape_min, global_mape_max, "median_absolute_percentage_error.png")
+    ]:
+        plt.figure(figsize=(10, 6))
+        for multiple in multiples:
+            if multiple in metric_dict[model]:
+                plt.plot(
+                    metric_dict[model][multiple],
+                    linestyle=line_styles[multiple],
+                    color=color_map[multiple],
+                    linewidth=2
+                )
+        if y_min is not None and y_max is not None:
+            plt.ylim(y_min, y_max)
 
-    # RMSE Plot
-    for multiple in multiples:
-        if multiple in rmse_dict[model]:
-            plt.plot(rmse_dict[model][multiple], label=multiple, linestyle=line_styles[multiple], color=color_map[multiple])
+        plt.ylabel(y_label)
+        plt.xlabel("Time (Years)")
+        plt.xticks(rotation=30)
+        # No legend here
+        plt.tight_layout()
+        plt.savefig(os.path.join(PLOT_DIR, f"{model}_{filename}"), dpi=100)
+        plt.show()
 
-    plt.ylim(global_rmse_min, global_rmse_max)
-    plt.ylabel("Monthly Median RMSE")
-    plt.xlabel("Time (Years)")
-    plt.xticks(rotation=30)
-    plt.legend(title="Multiple")
-    plt.tight_layout()
-    plt.savefig(os.path.join(PLOT_DIR, f"{model}_rmse_over_time.png"), dpi=100)
-    plt.show()
-
-
-    # CPI-adjusted RMSE Plot
-    plt.figure(figsize=(10, 6))
-    for multiple in multiples:
-        if multiple in rmse_dict_cpi[model]:
-            plt.plot(
-                rmse_dict_cpi[model][multiple],
-                label=multiple,
-                linestyle=line_styles[multiple],
-                color=color_map[multiple]
-            )
-    plt.ylim(global_rmse_cpi_min, global_rmse_cpi_max)
-    plt.ylabel("Monthly Median CPI-Adjusted RMSE")
-    plt.xlabel("Time (Years)")
-    plt.xticks(rotation=30)
-    plt.legend(title="Multiple")
-    plt.tight_layout()
-    plt.savefig(os.path.join(PLOT_DIR, f"{model}_rmse_cpi_over_time.png"), dpi=100)
-    plt.show()
-
-
-    # R² Plot
-    plt.figure(figsize=(10, 6))
-    for multiple in multiples:
-        if multiple in r2_dict[model]:
-            plt.plot(r2_dict[model][multiple], label=multiple, linestyle=line_styles[multiple], color=color_map[multiple])
-
-    # plt.ylim(global_r2_min, global_r2_max)
-    plt.ylabel("Monthly Median Out-of-Sample R²")
-    plt.xlabel("Time (Years)")
-    plt.xticks(rotation=30)
-    plt.legend(title="Multiple")
-    plt.tight_layout()
-    plt.savefig(os.path.join(PLOT_DIR, f"{model}_r2_over_time.png"), dpi=100)
-    plt.show()
-
-
-    # MAPE Plot
-    plt.figure(figsize=(10, 6))
-    for multiple in multiples:
-        if multiple in mape_dict[model]:
-            plt.plot(mape_dict[model][multiple], label=multiple, linestyle=line_styles[multiple], color=color_map[multiple])
-
-    plt.ylim(global_mape_min, global_mape_max)
-    plt.ylabel("Median Absolute Percentage Error")
-    plt.xlabel("Time (Years)")
-    plt.xticks(rotation=30)
-    plt.legend(title="Multiple")
-    plt.tight_layout()
-    plt.savefig(os.path.join(PLOT_DIR, f"{model}_median_absolute_percentage_error.png"), dpi=100)
-    plt.show()
-
-
-# Across industries
+# Industry barplots with hatching and no legend
 for model in models:
     industry_errors_df = pd.DataFrame(industry_errors_dict[model])
-
     plt.figure(figsize=(10, 6))
-    sns.barplot(
+    barplot = sns.barplot(
         x='Median Absolute Percentage Error',
         y='Industry',
         hue='Multiple',
@@ -443,14 +450,20 @@ for model in models:
         palette=color_map,
         hue_order=multiples
     )
-    # plt.xlim(global_industry_error_min, global_industry_error_max)  # Consistent x-axis
+
+    for bar, (_, row) in zip(barplot.patches, industry_errors_df.iterrows()):
+        bar.set_hatch(hatch_patterns[row['Multiple']])
+
+    ax = plt.gca()
+    legend = ax.get_legend()
+    if legend:
+        legend.remove()
+
     plt.xlabel("Median Absolute Percentage Error")
     plt.ylabel("Fama-French 10 Industries")
-    plt.legend(title="Multiple")
     plt.tight_layout()
     plt.savefig(os.path.join(PLOT_DIR, f"{model}_industry_errors.png"), dpi=100)
     plt.show()
-
 
 
 # %% Model Confidence Set (MCS) Test
@@ -471,7 +484,7 @@ for multiple in multiples:
     
     # Instantiate the MCS test.
     # Use test size of 0.05 and 1000 bootstrap replications.
-    mcs_test = MCS(losses_df, 0.05, reps=10000)
+    mcs_test = MCS(losses_df, 0.05, reps=1000, method="max")
     
     # Compute the MCS test; this runs the necessary bootstrap and elimination procedure.
     mcs_test.compute()
@@ -492,4 +505,5 @@ for multiple in multiples:
     print(mcs_test.excluded)
     
     print("="*80 + "\n")
+
 
