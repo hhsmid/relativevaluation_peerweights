@@ -9,6 +9,7 @@ import statsmodels.api as sm
 from joblib import Parallel, delayed
 from tqdm import tqdm
 import warnings
+from scipy.stats import norm
 
 # Suppress FutureWarning
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -144,7 +145,7 @@ for model in models:
             .apply(lambda x: x.assign(portfolio=assign_quintile_portfolio(x, "percentage_error_lag")))
             .reset_index(drop=True)
         )
-
+        
         # Remove mis-assigned rows (positive percentage_error_lag in quintile 1 and negative percentage_error_lag in quintile 5)
         misassigned_q1 = sorted_portfolios[(sorted_portfolios['portfolio'] == 1) & (sorted_portfolios['percentage_error_lag'] > 0)]
         misassigned_q5 = sorted_portfolios[(sorted_portfolios['portfolio'] == 5) & (sorted_portfolios['percentage_error_lag'] < 0)]
@@ -155,7 +156,7 @@ for model in models:
                 ((sorted_portfolios['portfolio'] == 5) & (sorted_portfolios['percentage_error_lag'] < 0))
             )]
         
-        # For each month, check if portfolio 1 (or 5) is empty after cleaning
+        # For each month, check if portfolio 1 and 5 are empty after cleaning
         empty_q1_months = sorted_portfolios.groupby("month").apply(lambda x: x[x['portfolio'] == 1].shape[0] == 0)
         empty_q5_months = sorted_portfolios.groupby("month").apply(lambda x: x[x['portfolio'] == 5].shape[0] == 0)
         
@@ -197,6 +198,20 @@ for model in models:
         # Compute mean return of the long-short portfolio
         mean_return = long_short_ff3["long_short"].mean()
         print(f"\nMean Monthly Return of Long-Short Portfolio: {mean_return:.4f}")
+
+        # Run a regression on a constant to test if the average return is significantly different from zero
+        X_const = np.ones((long_short_ff3["long_short"].shape[0], 1))
+        y = long_short_ff3["long_short"]
+        
+        constant_model = sm.OLS(y, X_const)
+        constant_results = constant_model.fit(cov_type="HAC", cov_kwds={"maxlags": 6})
+        
+        avg_return = constant_results.params[0]
+        std_error = constant_results.bse[0]
+        p_value = constant_results.pvalues[0]
+        print(f"\nEstimated Average Return: {avg_return:.4f}")
+        print(f"Standard Error: {std_error:.4f}")
+        print(f"p-Value: {p_value:.4f}")
         
         # Calculate excess returns and compute Sharpe ratio
         long_short_ff3["excess_return"] = long_short_ff3["long_short"] - long_short_ff3["rf"]
@@ -236,14 +251,14 @@ for model in models:
         plt.figure(figsize=(10, 6))
         for multiple, df_plot in model_cum_returns.items():
             plt.plot(df_plot["month"], df_plot["cumulative_return"],
-                     label=multiple,
                      color=color_map[multiple],
-                     linestyle=line_styles[multiple])
-        plt.axhline(y=1, color="gray", linestyle="--")
+                     linestyle=line_styles[multiple],
+                     linewidth=2)
+    
+        plt.axhline(y=1, color="gray", linestyle="--", linewidth=1)
         plt.xlabel("Year")
         plt.ylabel("Cumulative Return")
-        plt.legend()
-        # Save one file per model
+        plt.tight_layout()
         plt.savefig(os.path.join(PLOT_DIR, f"{model}_cumulative_returns.png"), dpi=100)
         plt.show()
 
