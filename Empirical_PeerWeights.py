@@ -613,81 +613,74 @@ def compute_frobenius_norms():
 
 def permutation_test_frobenius(n_permutations=1000, random_state=27):
     """
-    Perform permutation tests on Frobenius norms between peer weight matrices for each pair
-    of model-multiple combinations. In each month-fold, the natural pairing is compared with
-    a null distribution based on randomly permuting the rows of the second matrix. Individual
-    month-fold p-values are then combined using Fisher's method.
-    
-    Args:
-        n_permutations (int): Number of permutations for each month-fold test.
-        random_state (int): Random seed for reproducibility.
-    
+    Fully parallelized permutation test of Frobenius norms with a single progress bar.
+    Parallelization is done across all (key1, key2, month, fold) tasks at once.
+
     Returns:
-        pd.DataFrame: Lower triangular matrix (DataFrame) with combined p-values for each pair.
+        pd.DataFrame: Lower triangular matrix of combined p-values.
     """
     rng = np.random.default_rng(random_state)
-    
-    # Construct keys for each model and multiple combination
-    comb_keys = [f"{model}_{multiple}" for model in models for multiple in multiples]
-    combined_pvals = {}  # Dictionary to store overall p-values for each pair
 
-    # Iterate over each pair of model-multiple combinations
-    for key1, key2 in tqdm(combinations(comb_keys, 2), desc="Permutation Testing with Row Permutations", leave=True):
+    comb_keys = [f"{model}_{multiple}" for model in models for multiple in multiples]
+
+    def process_single_task(key1, key2, model1, model2, multiple1, multiple2, month, fold):
+        df1 = load_peer_weights(model1, multiple1, month, fold)
+        df2 = load_peer_weights(model2, multiple2, month, fold)
+        if df1 is None or df2 is None:
+            return (key1, key2, None)
+
+        common_index = df1.index.intersection(df2.index)
+        common_columns = df1.columns.intersection(df2.columns)
+        if len(common_index) == 0 or len(common_columns) == 0:
+            return (key1, key2, None)
+
+        A = df1.loc[common_index, common_columns]
+        B = df2.loc[common_index, common_columns]
+
+        F_obs = np.linalg.norm(A.values - B.values, 'fro')
+        permuted_norms = [
+            np.linalg.norm(A.values - B.reindex(rng.permutation(B.index)).values, 'fro')
+            for _ in range(n_permutations)
+        ]
+        p_val = np.mean(np.array(permuted_norms) <= F_obs)
+        return (key1, key2, p_val)
+
+    # Create all tasks upfront
+    tasks = []
+    for key1, key2 in combinations(comb_keys, 2):
         model1, multiple1 = key1.split("_")
         model2, multiple2 = key2.split("_")
-        monthfold_pvals = []
-        
-        # Loop through each month and fold
-        for month in tqdm(months, desc="Months", leave=True):
-            for fold in tqdm(folds, desc="Folds", leave=False):
-                df1 = load_peer_weights(model1, multiple1, month, fold)
-                df2 = load_peer_weights(model2, multiple2, month, fold)
-                if df1 is None or df2 is None:
-                    continue
-                
-                # Align the matrices on their common rows and columns
-                common_index = df1.index.intersection(df2.index)
-                common_columns = df1.columns.intersection(df2.columns)
-                if len(common_index) == 0 or len(common_columns) == 0:
-                    continue
-                
-                A = df1.loc[common_index, common_columns]
-                B = df2.loc[common_index, common_columns]
-                
-                # Compute the observed Frobenius norm
-                F_obs = np.linalg.norm(A.values - B.values, 'fro')
-                
-                # Build the null distribution by randomly permuting rows of the second matrix
-                permuted_norms = []
-                for _ in range(n_permutations):
-                    permuted_index = rng.permutation(B.index)
-                    B_perm = B.reindex(permuted_index)
-                    F_perm = np.linalg.norm(A.values - B_perm.values, 'fro')
-                    permuted_norms.append(F_perm)
-                permuted_norms = np.array(permuted_norms)
-                
-                # One-sided p-value: Proportion of permuted norms that are <= observed norm
-                p_val = np.mean(permuted_norms <= F_obs)
-                monthfold_pvals.append(p_val)
-        
-        # Combine month-fold p-values via Fisher's method if any p-values were computed
-        if len(monthfold_pvals) > 0:
-            min_p = 1e-10
-            adjusted_pvals = [max(p, min_p) for p in monthfold_pvals]
-            fisher_stat = -2 * np.sum(np.log(adjusted_pvals))
-            df_fisher = 2 * len(adjusted_pvals)
-            combined_p = 1 - chi2.cdf(fisher_stat, df_fisher)
-        else:
-            combined_p = np.nan
+        for month in months:
+            for fold in folds:
+                tasks.append((key1, key2, model1, model2, multiple1, multiple2, month, fold))
+
+    # Run all tasks in parallel
+    results = Parallel(n_jobs=cores)(
+        delayed(process_single_task)(*task) for task in tqdm(tasks, desc="Permutation Tests")
+    )
+
+    # Group p-values by (key1, key2)
+    pval_buckets = defaultdict(list)
+    for key1, key2, p_val in results:
+        if p_val is not None:
+            pval_buckets[(key1, key2)].append(p_val)
+
+    # Combine p-values using Fisher's method
+    combined_pvals = {}
+    for (key1, key2), pvals in pval_buckets.items():
+        min_p = 1e-10
+        adjusted = [max(p, min_p) for p in pvals]
+        stat = -2 * np.sum(np.log(adjusted))
+        dof = 2 * len(adjusted)
+        combined_p = 1 - chi2.cdf(stat, dof)
         combined_pvals[(key1, key2)] = combined_p
 
-    # Prepare a full square (lower triangular) matrix of combined p-values
+    # Fill lower triangle matrix
     pval_matrix = pd.DataFrame(np.nan, index=comb_keys, columns=comb_keys)
-    for (k1, k2), p_val in combined_pvals.items():
-        pval_matrix.loc[k2, k1] = p_val
-        
-    return pval_matrix
+    for (k1, k2), p in combined_pvals.items():
+        pval_matrix.loc[k2, k1] = p
 
+    return pval_matrix
 
 
 # %% Execution
@@ -701,14 +694,14 @@ fold = 3
 plot_peer_weights(test_firm_gvkey, month, fold)
 
 # Get and display the top 5 peers table for the specified test firm over all months
-#consolidated_top = get_consolidated_top_peers(test_firm_gvkey, 5)
-#print("\nOverall Consolidated Top 5 Peers:")
-#print(consolidated_top)
+consolidated_top = get_consolidated_top_peers(test_firm_gvkey, 5)
+print("\nOverall Consolidated Top 5 Peers:")
+print(consolidated_top)
 
 # Save the top peers table
-#output_table_path = os.path.join(RESULTS_DIR, "top5_peers_table.csv")
-#consolidated_top.to_csv(output_table_path, index=False)
-#print(f"\nTop 5 peers table saved to {output_table_path}")
+output_table_path = os.path.join(RESULTS_DIR, "top5_peers_table.csv")
+consolidated_top.to_csv(output_table_path, index=False)
+print(f"\nTop 5 peers table saved to {output_table_path}")
     
 # Plot aggregated heatmaps for top peers overlap
 for num in [10, 20, 50]:
@@ -716,14 +709,14 @@ for num in [10, 20, 50]:
     plot_heatmaps(test_firm_gvkey, num)
 
 # Compute and display peer weight concentration metrics
-#print("\nComputing peer weight concentration metrics...")
-#concentration_results = compute_concentration_metrics()
+print("\nComputing peer weight concentration metrics...")
+concentration_results = compute_concentration_metrics()
 
 # For each multiple, print the corresponding concentration table and save
-#for mult in multiples:
-#    print(f"\n=== Concentration Metrics for {mult.upper()} ===")
-#    print(concentration_results[mult])
-#    concentration_results[mult].to_csv(os.path.join(RESULTS_DIR, f"concentration_metrics_{mult}.csv"))
+for mult in multiples:
+    print(f"\n=== Concentration Metrics for {mult.upper()} ===")
+    print(concentration_results[mult])
+    concentration_results[mult].to_csv(os.path.join(RESULTS_DIR, f"concentration_metrics_{mult}.csv"))
 
 # Compute Frobenius norms
 mean_matrix, std_matrix, pair_results = compute_frobenius_norms()
