@@ -3,6 +3,8 @@ Python code based on the the paper "Machine Learning-Based Relative Valuation: A
 
 This repository includes all the code needed to reproduce the analysis from the paper.
 
+The "data" folder includes the script for data collection and preparation. The "models" folder includes scripts for model execution and peer weight computations. The "results" folder includes scripts for reproducing evaluation metrics, test procedures, and regressions.
+
 
 Abstract:
 
