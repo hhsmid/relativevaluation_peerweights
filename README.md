@@ -1,5 +1,5 @@
 # relativevaluation_peerweights
-Python code based on the the paper "Machine Learning-Based Relative Valuation: A Unified Framework with Peer Weights from Clustering and Tree-Based Models"
+Python code for the paper "Machine Learning-Based Relative Valuation: A Unified Framework with Peer Weights from Clustering and Tree-Based Models"
 
 This repository includes all the code needed to reproduce the analysis from the paper.
 
