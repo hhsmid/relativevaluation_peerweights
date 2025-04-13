@@ -409,6 +409,7 @@ def plot_heatmaps(test_firm_gvkey, num_peers):
             cmap="rocket_r",
             annot=True,
             fmt=".0f",
+            annot_kws={"size": 20},
             linewidths=0.5,
             linecolor="white",
             square=True,
@@ -642,7 +643,7 @@ def permutation_test_frobenius(n_permutations=1000, random_state=27):
             np.linalg.norm(A.values - B.reindex(rng.permutation(B.index)).values, 'fro')
             for _ in range(n_permutations)
         ]
-        p_val = np.mean(np.array(permuted_norms) <= F_obs)
+        p_val = np.mean(np.array(permuted_norms) >= F_obs)
         return (key1, key2, p_val)
 
     # Create all tasks upfront
@@ -683,9 +684,10 @@ def permutation_test_frobenius(n_permutations=1000, random_state=27):
     return pval_matrix
 
 
+
 # %% Execution
 # Check gvkey consistency
-#check_gvkey_consistency()
+check_gvkey_consistency()
 
 # Example Test Firm and Month Selection for Plotting
 test_firm_gvkey = "001690" # This is Apple Inc.
@@ -723,16 +725,8 @@ mean_matrix, std_matrix, pair_results = compute_frobenius_norms()
 print("\n=== Frobenius Norms Between Peer Weight Matrices ===")
 print(mean_matrix, std_matrix)
 
-# Save Frobenius norms results
 mean_matrix.to_csv(os.path.join(RESULTS_DIR, "frobenius_norms_mean_results.csv"))
 std_matrix.to_csv(os.path.join(RESULTS_DIR, "frobenius_norms_std_results.csv"))
-
-pair_results_df = pd.DataFrame({
-    'pair': [f"{k[0]} vs {k[1]}" for k in pair_results.keys()],
-    'frobenius_norms': [v for v in pair_results.values()]
-})
-
-pair_results_df.to_csv(os.path.join(RESULTS_DIR, "frobenius_norms_pair_results.csv"), index=False)
 
 # Compute the permutation test p-values
 pvals_df = permutation_test_frobenius(n_permutations=1000, random_state=27)
