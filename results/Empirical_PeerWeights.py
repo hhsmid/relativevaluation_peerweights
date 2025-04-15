@@ -550,66 +550,79 @@ def compute_concentration_metrics():
     return results
 
 
-def compute_frobenius_norms():
+def permutation_test_frobenius(n_permutations=1000, random_state=27):
     """
-    Compute Frobenius norms between peer weight matrices across model-multiple combinations.
+    Fully parallelized permutation test of Frobenius norms with a single progress bar.
+    Parallelization is done across all (key1, key2, month, fold) tasks at once.
+
+    Returns:
+        pd.DataFrame: Lower triangular matrix of combined p-values.
     """
+    rng = np.random.default_rng(random_state)
+
     comb_keys = [f"{model}_{multiple}" for model in models for multiple in multiples]
-    pair_results = {pair: [] for pair in combinations(comb_keys, 2)}
 
-    for month in tqdm(months, desc="Computing Frobenius Norms (Months)"):
-        for fold in tqdm(folds, desc="Processing Folds", leave=False):
-            # Load matrices in parallel with progress bar
-            matrices = dict(
-                zip(
-                    [(m, mu) for m in models for mu in multiples],
-                    Parallel(n_jobs=cores)(
-                        delayed(load_peer_weights)(model, multiple, month, fold)
-                        for model in models for multiple in multiples
-                    )
-                )
+    def process_single_task(key1, key2, model1, model2, multiple1, multiple2, month, fold):
+        df1 = load_peer_weights(model1, multiple1, month, fold)
+        df2 = load_peer_weights(model2, multiple2, month, fold)
+        if df1 is None or df2 is None:
+            return (key1, key2, None)
+
+        common_index = df1.index.intersection(df2.index)
+        common_columns = df1.columns.intersection(df2.columns)
+        if len(common_index) == 0 or len(common_columns) == 0:
+            return (key1, key2, None)
+
+        A = df1.loc[common_index, common_columns]
+        B = df2.loc[common_index, common_columns]
+
+        F_obs = np.linalg.norm(A.values - B.values, 'fro')
+        permuted_norms = [
+            np.linalg.norm(
+                A.reindex(rng.permutation(A.index)).values -
+                B.reindex(rng.permutation(B.index)).values, 'fro'
             )
+            for _ in range(n_permutations)
+        ]
+        p_val = np.mean(np.array(permuted_norms) >= F_obs)
+        return (key1, key2, p_val)
 
-            # Filter out None values
-            matrices = {
-                f"{model}_{multiple}": df
-                for (model, multiple), df in matrices.items()
-                if df is not None
-            }
+    # Create all tasks upfront
+    tasks = []
+    for key1, key2 in combinations(comb_keys, 2):
+        model1, multiple1 = key1.split("_")
+        model2, multiple2 = key2.split("_")
+        for month in months:
+            for fold in folds:
+                tasks.append((key1, key2, model1, model2, multiple1, multiple2, month, fold))
 
-            def compute_frob_norm(key1, key2):
-                df1, df2 = matrices[key1], matrices[key2]
-                common_index = df1.index.intersection(df2.index)
-                common_columns = df1.columns.intersection(df2.columns)
-                if len(common_index) == 0 or len(common_columns) == 0:
-                    print(f"No common gvkeys for {key1} and {key2} in {month}, fold {fold}. Skipping.")
-                    return None
-                
-                aligned1, aligned2 = df1.loc[common_index, common_columns], df2.loc[common_index, common_columns]
-                return np.linalg.norm(aligned1.values - aligned2.values, 'fro')
+    # Run all tasks in parallel
+    results = Parallel(n_jobs=cores)(
+        delayed(process_single_task)(*task) for task in tqdm(tasks, desc="Permutation Tests")
+    )
 
-            # Compute Frobenius norms in parallel with tqdm
-            results = Parallel(n_jobs=cores)(
-                delayed(compute_frob_norm)(key1, key2)
-                for key1, key2 in tqdm(combinations(matrices.keys(), 2), 
-                                       desc="Frobenius Norm Computation", leave=False)
-            )
+    # Group p-values by (key1, key2)
+    pval_buckets = defaultdict(list)
+    for key1, key2, p_val in results:
+        if p_val is not None:
+            pval_buckets[(key1, key2)].append(p_val)
 
-            # Store results
-            for (key1, key2), frob_norm in zip(combinations(matrices.keys(), 2), results):
-                if frob_norm is not None:
-                    pair_results[(key1, key2)].append(frob_norm)
+    # Combine p-values using Fisher's method
+    combined_pvals = {}
+    for (key1, key2), pvals in pval_buckets.items():
+        min_p = 1e-10
+        adjusted = [max(p, min_p) for p in pvals]
+        stat = -2 * np.sum(np.log(adjusted))
+        dof = 2 * len(adjusted)
+        combined_p = 1 - chi2.cdf(stat, dof)
+        combined_pvals[(key1, key2)] = combined_p
 
-    # Create mean and std matrices
-    mean_matrix = pd.DataFrame(index=comb_keys, columns=comb_keys, dtype=float)
-    std_matrix = pd.DataFrame(index=comb_keys, columns=comb_keys, dtype=float)
+    # Fill lower triangle matrix
+    pval_matrix = pd.DataFrame(np.nan, index=comb_keys, columns=comb_keys)
+    for (k1, k2), p in combined_pvals.items():
+        pval_matrix.loc[k2, k1] = p
 
-    for key1, key2 in pair_results.keys():
-        values = pair_results[(key1, key2)]
-        mean_matrix.loc[key1, key2] = mean_matrix.loc[key2, key1] = np.mean(values) if values else np.nan
-        std_matrix.loc[key1, key2] = std_matrix.loc[key2, key1] = np.std(values) if values else np.nan
-
-    return mean_matrix, std_matrix, pair_results
+    return pval_matrix
 
 
 def permutation_test_frobenius(n_permutations=1000, random_state=27):
