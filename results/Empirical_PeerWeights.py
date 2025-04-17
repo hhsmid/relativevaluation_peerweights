@@ -648,8 +648,8 @@ def permutation_test_frobenius(n_permutations=1000, random_state=27, n_jobs=core
             pval_matrix.loc[key2, key1] = np.nan
             continue
 
-        # Pbserved distance
-        obs_vals = Parallel(n_jobs=n_jobs, backend="loky")(
+        # Observed distance
+        obs_vals = Parallel(n_jobs=n_jobs, backend="threading")(
             delayed(frob_norm)(A, B) for A, B in tasks_data
         )
         obs_global = np.mean(obs_vals)
@@ -659,12 +659,12 @@ def permutation_test_frobenius(n_permutations=1000, random_state=27, n_jobs=core
             rng = np.random.default_rng(random_state + idx * n_permutations + b)
             permuted_means = []
             for A, B in tasks_data:
-                perm = rng.permutation(A.shape[0])       # a permutation of row‑indices
-                A_perm = A[perm, :]                     # reorder rows
+                perm = rng.permutation(A.shape[0]) 
+                A_perm = A[perm, :]
                 permuted_means.append(frob_norm(A_perm, B))
             return np.mean(permuted_means)
 
-        perm_globals = Parallel(n_jobs=n_jobs, backend="loky")(
+        perm_globals = Parallel(n_jobs=n_jobs, backend="threading")(
             delayed(single_perm)(b) for b in range(n_permutations)
         )
 
